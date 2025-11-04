@@ -1,0 +1,49 @@
+{
+  "nodes": [
+    {
+      "id": "src/screens/LoginScreen.jsx",
+      "label": "LoginScreen",
+      "routes": [
+        "/login"
+      ]
+    },
+    {
+      "id": "src/screens/Screen/sections/DivWrapper/DivWrapper.jsx",
+      "label": "DivWrapper",
+      "routes": [
+        "/*",
+        "/",
+        "/home",
+        "/stats"
+      ],
+      "isRoot": true
+    },
+    {
+      "id": "src/pages/ReviewPage/ReviewPage.jsx",
+      "label": "ReviewPage",
+      "routes": [
+        "/review",
+        "/review/subject/:subjectId",
+        "/review/subject/:subjectId/document/:documentId"
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "id": "src/pages/ReviewPage/ReviewPage.jsx:99:4-to-src/pages/ReviewPage/ReviewPage.jsx",
+      "source": "src/pages/ReviewPage/ReviewPage.jsx",
+      "target": "src/pages/ReviewPage/ReviewPage.jsx",
+      "data": {
+        "viaRoute": "/review",
+        "trigger": {
+          "element": "navigate('/review')",
+          "line": 99,
+          "endLine": 99,
+          "column": 4,
+          "endColumn": 23,
+          "sourceFile": "src/pages/ReviewPage/ReviewPage.jsx"
+        }
+      }
+    }
+  ]
+}

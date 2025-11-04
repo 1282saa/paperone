@@ -1,0 +1,23 @@
+{
+  "name": "ocr-test-backend",
+  "version": "1.0.0",
+  "description": "OCR Test Backend - Serverless API",
+  "main": "src/lambda_handler.py",
+  "scripts": {
+    "deploy": "serverless deploy",
+    "remove": "serverless remove",
+    "logs": "serverless logs -f api"
+  },
+  "keywords": [
+    "serverless",
+    "aws",
+    "lambda",
+    "dynamodb"
+  ],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "serverless": "^3.38.0",
+    "serverless-python-requirements": "^6.1.0"
+  }
+}

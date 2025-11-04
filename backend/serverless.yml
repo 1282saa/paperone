@@ -1,0 +1,239 @@
+service: ocr-test
+
+frameworkVersion: '3'
+
+provider:
+  name: aws
+  runtime: python3.11
+  region: ${opt:region, 'us-east-1'}
+  stage: ${opt:stage, 'dev'}
+  timeout: 30
+  memorySize: 512
+
+  # API Gateway에서 바이너리 데이터 처리를 위한 설정
+  apiGateway:
+    binaryMediaTypes:
+      - 'multipart/form-data'
+      - 'image/jpeg'
+      - 'image/png'
+      - 'image/jpg'
+      - 'image/*'
+
+  environment:
+    STAGE: ${self:provider.stage}
+    SECRET_KEY: ${env:SECRET_KEY, 'default-secret-key-must-be-at-least-32-characters-long-change-in-production'}
+    BEDROCK_MODEL_ID: ${env:BEDROCK_MODEL_ID, 'anthropic.claude-3-sonnet-20240229-v1:0'}
+    APP_AWS_REGION: ${self:provider.region}
+    SUBJECTS_TABLE: ${self:custom.subjectsTableName}
+    DOCUMENTS_TABLE: ${self:custom.documentsTableName}
+    COGNITO_USER_POOL_ID: ${env:COGNITO_USER_POOL_ID, 'us-east-1_LBzH1bqb8'}
+    COGNITO_CLIENT_ID: ${env:COGNITO_CLIENT_ID, '6avv0p8tgn757n8qpfdco8kdl6'}
+
+  iam:
+    role:
+      statements:
+        # DynamoDB permissions
+        - Effect: Allow
+          Action:
+            - dynamodb:Query
+            - dynamodb:Scan
+            - dynamodb:GetItem
+            - dynamodb:PutItem
+            - dynamodb:UpdateItem
+            - dynamodb:DeleteItem
+            - dynamodb:BatchGetItem
+            - dynamodb:BatchWriteItem
+          Resource:
+            - Fn::GetAtt: [SubjectsTable, Arn]
+            - Fn::GetAtt: [DocumentsTable, Arn]
+            - Fn::Join:
+              - '/'
+              - - Fn::GetAtt: [SubjectsTable, Arn]
+                - 'index/*'
+            - Fn::Join:
+              - '/'
+              - - Fn::GetAtt: [DocumentsTable, Arn]
+                - 'index/*'
+        # Bedrock permissions
+        - Effect: Allow
+          Action:
+            - bedrock:InvokeModel
+            - bedrock:InvokeModelWithResponseStream
+          Resource: '*'
+        # Cognito permissions
+        - Effect: Allow
+          Action:
+            - cognito-idp:AdminConfirmSignUp
+            - cognito-idp:AdminGetUser
+            - cognito-idp:AdminInitiateAuth
+            - cognito-idp:AdminRespondToAuthChallenge
+            - cognito-idp:SignUp
+            - cognito-idp:InitiateAuth
+          Resource: 'arn:aws:cognito-idp:${self:provider.region}:*:userpool/*'
+        # S3 permissions for image upload
+        - Effect: Allow
+          Action:
+            - s3:PutObject
+            - s3:GetObject
+            - s3:DeleteObject
+            - s3:PutObjectAcl
+          Resource:
+            - 'arn:aws:s3:::ocr-images-storage-1761916475/*'
+            - 'arn:aws:s3:::test-ocr-frontend-1761916475/*'
+        - Effect: Allow
+          Action:
+            - s3:ListBucket
+          Resource:
+            - 'arn:aws:s3:::ocr-images-storage-1761916475'
+            - 'arn:aws:s3:::test-ocr-frontend-1761916475'
+        # CloudWatch Logs
+        - Effect: Allow
+          Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+          Resource: '*'
+
+functions:
+  api:
+    handler: src.lambda_handler.handler
+    events:
+      - http:
+          path: /{proxy+}
+          method: ANY
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - Authorization
+              - X-Amz-Date
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+            allowCredentials: false
+      - http:
+          path: /
+          method: ANY
+          cors:
+            origin: '*'
+            headers:
+              - Content-Type
+              - Authorization
+              - X-Amz-Date
+              - X-Api-Key
+              - X-Amz-Security-Token
+              - X-Amz-User-Agent
+            allowCredentials: false
+    layers:
+      - Ref: PythonRequirementsLambdaLayer
+
+plugins:
+  - serverless-python-requirements
+
+custom:
+  subjectsTableName: ${self:service}-subjects-${self:provider.stage}
+  documentsTableName: ${self:service}-documents-${self:provider.stage}
+
+  pythonRequirements:
+    dockerizePip: true
+    layer: true
+    zip: true
+    slim: true
+    strip: false
+    pythonBin: python3.11
+
+package:
+  individually: false
+  patterns:
+    - '!node_modules/**'
+    - '!venv/**'
+    - '!.venv/**'
+    - '!__pycache__/**'
+    - '!.pytest_cache/**'
+    - '!tests/**'
+    - '!*.md'
+    - '!.git/**'
+
+resources:
+  Resources:
+    # Subjects Table
+    SubjectsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.subjectsTableName}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: PK
+            AttributeType: S
+          - AttributeName: SK
+            AttributeType: S
+          - AttributeName: user_id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: PK
+            KeyType: HASH
+          - AttributeName: SK
+            KeyType: RANGE
+        GlobalSecondaryIndexes:
+          - IndexName: UserIndex
+            KeySchema:
+              - AttributeName: user_id
+                KeyType: HASH
+              - AttributeName: SK
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES
+        Tags:
+          - Key: Environment
+            Value: ${self:provider.stage}
+          - Key: Service
+            Value: ${self:service}
+
+    # Documents Table
+    DocumentsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.documentsTableName}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: PK
+            AttributeType: S
+          - AttributeName: SK
+            AttributeType: S
+          - AttributeName: subject_id
+            AttributeType: S
+          - AttributeName: user_id
+            AttributeType: S
+          - AttributeName: created_at
+            AttributeType: S
+        KeySchema:
+          - AttributeName: PK
+            KeyType: HASH
+          - AttributeName: SK
+            KeyType: RANGE
+        GlobalSecondaryIndexes:
+          - IndexName: SubjectIndex
+            KeySchema:
+              - AttributeName: subject_id
+                KeyType: HASH
+              - AttributeName: created_at
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+          - IndexName: UserIndex
+            KeySchema:
+              - AttributeName: user_id
+                KeyType: HASH
+              - AttributeName: created_at
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES
+        Tags:
+          - Key: Environment
+            Value: ${self:provider.stage}
+          - Key: Service
+            Value: ${self:service}

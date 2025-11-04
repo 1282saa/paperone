@@ -1,0 +1,391 @@
+import React, { useState, useEffect } from 'react';
+
+export const ReviewMode = ({
+  documentContent,
+  documentTitle,
+  onComplete,
+  onExit
+}) => {
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const [questions, setQuestions] = useState([]);
+  const [answers, setAnswers] = useState([]);
+  const [currentAnswer, setCurrentAnswer] = useState('');
+  const [showFeedback, setShowFeedback] = useState(false);
+  const [isCorrect, setIsCorrect] = useState(false);
+  const [score, setScore] = useState(0);
+  const [startTime, setStartTime] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [showResults, setShowResults] = useState(false);
+
+  // 컴포넌트 마운트 시 문제 생성
+  useEffect(() => {
+    generateQuestions();
+    setStartTime(new Date());
+  }, [documentContent]);
+
+  // AI로 문제 생성 (임시로 하드코딩)
+  const generateQuestions = async () => {
+    setIsLoading(true);
+
+    // TODO: 실제로는 AI API 호출
+    // const response = await generateQuizFromDocument(documentContent);
+
+    // 임시 문제 데이터
+    const mockQuestions = [
+      {
+        type: 'fill-blank',
+        question: '에빙하우스의 ___에 따르면 학습 후 24시간이 지나면 ___% 정도를 잊어버린다.',
+        blanks: ['망각곡선', '70'],
+        hint: '기억과 관련된 이론입니다'
+      },
+      {
+        type: 'multiple-choice',
+        question: '다음 중 효과적인 복습 주기로 가장 적절한 것은?',
+        options: [
+          '매일 복습',
+          '1일, 3일, 7일, 30일 간격',
+          '일주일에 한 번',
+          '시험 전날 몰아서'
+        ],
+        correctAnswer: 1,
+        explanation: '망각곡선을 고려한 간격 반복 학습이 가장 효과적입니다.'
+      },
+      {
+        type: 'short-answer',
+        question: '장기기억으로 전환하기 위한 가장 중요한 방법은 무엇인가요?',
+        keywords: ['반복', '복습', '간격'],
+        explanation: '일정한 간격을 두고 반복 학습하는 것이 중요합니다.'
+      }
+    ];
+
+    setQuestions(mockQuestions);
+    setIsLoading(false);
+  };
+
+  // 답변 확인
+  const checkAnswer = () => {
+    const question = questions[currentQuestionIndex];
+    let correct = false;
+
+    switch (question.type) {
+      case 'fill-blank':
+        // 빈칸 채우기 - 모든 빈칸이 맞아야 정답
+        const userAnswers = currentAnswer.split(',').map(a => a.trim().toLowerCase());
+        const correctAnswers = question.blanks.map(a => a.toLowerCase());
+        correct = JSON.stringify(userAnswers) === JSON.stringify(correctAnswers);
+        break;
+
+      case 'multiple-choice':
+        // 객관식
+        correct = parseInt(currentAnswer) === question.correctAnswer;
+        break;
+
+      case 'short-answer':
+        // 주관식 - 키워드 포함 여부 확인
+        const lowerAnswer = currentAnswer.toLowerCase();
+        correct = question.keywords.some(keyword =>
+          lowerAnswer.includes(keyword.toLowerCase())
+        );
+        break;
+    }
+
+    setIsCorrect(correct);
+    setShowFeedback(true);
+
+    if (correct) {
+      setScore(score + 1);
+    }
+
+    // 답변 기록
+    setAnswers([...answers, {
+      questionIndex: currentQuestionIndex,
+      userAnswer: currentAnswer,
+      isCorrect: correct
+    }]);
+  };
+
+  // 다음 문제로
+  const nextQuestion = () => {
+    if (currentQuestionIndex < questions.length - 1) {
+      setCurrentQuestionIndex(currentQuestionIndex + 1);
+      setCurrentAnswer('');
+      setShowFeedback(false);
+      setIsCorrect(false);
+    } else {
+      // 복습 완료
+      finishReview();
+    }
+  };
+
+  // 복습 완료
+  const finishReview = () => {
+    const endTime = new Date();
+    const duration = Math.round((endTime - startTime) / 1000); // 초 단위
+    const scorePercent = Math.round((score / questions.length) * 100);
+
+    setShowResults(true);
+
+    // 결과 콜백 호출
+    if (onComplete) {
+      onComplete({
+        score: scorePercent,
+        duration: duration,
+        totalQuestions: questions.length,
+        correctAnswers: score,
+        answers: answers
+      });
+    }
+  };
+
+  // 로딩 중
+  if (isLoading) {
+    return (
+      <div className="flex flex-col items-center justify-center h-96">
+        <div className="w-16 h-16 border-4 border-[#00c288] border-t-transparent rounded-full animate-spin mb-4"></div>
+        <p className="text-lg font-medium text-[#767676]">AI가 복습 문제를 생성하고 있어요...</p>
+      </div>
+    );
+  }
+
+  // 결과 화면
+  if (showResults) {
+    const scorePercent = Math.round((score / questions.length) * 100);
+    const duration = Math.round((new Date() - startTime) / 1000);
+
+    return (
+      <div className="bg-white rounded-2xl p-12 text-center max-w-2xl mx-auto">
+        {/* 축하 애니메이션 */}
+        <div className="mb-8">
+          {scorePercent >= 80 ? (
+            <div className="text-8xl animate-bounce">🎉</div>
+          ) : scorePercent >= 60 ? (
+            <div className="text-8xl">😊</div>
+          ) : (
+            <div className="text-8xl">💪</div>
+          )}
+        </div>
+
+        <h2 className="text-3xl font-bold mb-2">복습 완료!</h2>
+        <p className="text-[#767676] mb-8">수고하셨습니다</p>
+
+        {/* 점수 및 통계 */}
+        <div className="grid grid-cols-3 gap-6 mb-8">
+          <div className={`rounded-xl p-6 ${
+            scorePercent >= 80 ? 'bg-green-50' : scorePercent >= 60 ? 'bg-blue-50' : 'bg-orange-50'
+          }`}>
+            <div className={`text-4xl font-bold mb-2 ${
+              scorePercent >= 80 ? 'text-green-600' : scorePercent >= 60 ? 'text-blue-600' : 'text-orange-600'
+            }`}>
+              {scorePercent}%
+            </div>
+            <div className="text-sm text-[#767676]">정답률</div>
+          </div>
+          <div className="bg-[#e8f5e9] rounded-xl p-6">
+            <div className="text-4xl font-bold text-[#00c288] mb-2">
+              {score}/{questions.length}
+            </div>
+            <div className="text-sm text-[#767676]">맞힌 문제</div>
+          </div>
+          <div className="bg-[#fff3e0] rounded-xl p-6">
+            <div className="text-4xl font-bold text-[#ff9800] mb-2">
+              {Math.floor(duration / 60)}분
+            </div>
+            <div className="text-sm text-[#767676]">소요 시간</div>
+          </div>
+        </div>
+
+        {/* 다음 복습 일정 */}
+        <div className="bg-gradient-to-r from-[#667eea] to-[#764ba2] rounded-xl p-6 text-white mb-6">
+          <p className="text-sm opacity-90 mb-2">다음 복습 예정일</p>
+          <p className="text-2xl font-bold mb-2">
+            {new Date(Date.now() + (scorePercent >= 80 ? 7 : 3) * 24 * 60 * 60 * 1000).toLocaleDateString('ko-KR')}
+          </p>
+          <p className="text-sm opacity-90">
+            {scorePercent >= 80
+              ? '훌륭해요! 7일 후에 다시 복습해주세요'
+              : '3일 후에 다시 복습하면 더 잘 기억할 수 있어요'}
+          </p>
+        </div>
+
+        {/* 액션 버튼 */}
+        <div className="flex gap-3">
+          <button
+            onClick={onExit}
+            className="flex-1 py-3 bg-[#e0e0e0] rounded-xl font-semibold hover:bg-[#d0d0d0] transition-colors"
+          >
+            돌아가기
+          </button>
+          {score < questions.length && (
+            <button
+              onClick={() => {
+                setCurrentQuestionIndex(0);
+                setScore(0);
+                setAnswers([]);
+                setShowResults(false);
+                setCurrentAnswer('');
+                setShowFeedback(false);
+              }}
+              className="flex-1 py-3 bg-gradient-to-r from-[#667eea] to-[#764ba2] text-white rounded-xl font-semibold hover:shadow-lg transition-all"
+            >
+              틀린 문제 다시 풀기
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  const currentQuestion = questions[currentQuestionIndex];
+  const progress = ((currentQuestionIndex + 1) / questions.length) * 100;
+
+  return (
+    <div className="max-w-3xl mx-auto">
+      {/* 진행 표시 */}
+      <div className="mb-8">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-sm font-medium text-[#767676]">
+            문제 {currentQuestionIndex + 1} / {questions.length}
+          </span>
+          <span className="text-sm font-medium text-[#00c288]">
+            {score}점
+          </span>
+        </div>
+        <div className="w-full h-2 bg-[#f0f0f0] rounded-full overflow-hidden">
+          <div
+            className="h-full bg-gradient-to-r from-[#00c288] to-[#00a876] transition-all duration-300"
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+      </div>
+
+      {/* 문제 카드 */}
+      <div className="bg-white rounded-2xl p-8 shadow-lg mb-6">
+        <h3 className="text-xl font-semibold mb-6">
+          {currentQuestion.type === 'fill-blank' && '빈칸을 채워주세요'}
+          {currentQuestion.type === 'multiple-choice' && '정답을 선택하세요'}
+          {currentQuestion.type === 'short-answer' && '간단히 설명해주세요'}
+        </h3>
+
+        {/* 문제 내용 */}
+        <div className="mb-6">
+          {currentQuestion.type === 'fill-blank' && (
+            <div>
+              <p className="text-lg leading-relaxed mb-4">{currentQuestion.question}</p>
+              <input
+                type="text"
+                value={currentAnswer}
+                onChange={(e) => setCurrentAnswer(e.target.value)}
+                placeholder="답을 쉼표로 구분하여 입력하세요 (예: 답1, 답2)"
+                className="w-full px-4 py-3 border-2 border-[#e0e0e0] rounded-xl focus:border-[#00c288] focus:outline-none"
+                disabled={showFeedback}
+              />
+              {currentQuestion.hint && !showFeedback && (
+                <p className="text-sm text-[#767676] mt-2">💡 힌트: {currentQuestion.hint}</p>
+              )}
+            </div>
+          )}
+
+          {currentQuestion.type === 'multiple-choice' && (
+            <div>
+              <p className="text-lg leading-relaxed mb-6">{currentQuestion.question}</p>
+              <div className="space-y-3">
+                {currentQuestion.options.map((option, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => !showFeedback && setCurrentAnswer(idx.toString())}
+                    className={`w-full p-4 rounded-xl text-left border-2 transition-all ${
+                      currentAnswer === idx.toString()
+                        ? 'border-[#00c288] bg-[#e8f5e9]'
+                        : 'border-[#e0e0e0] hover:border-[#b0b0b0]'
+                    } ${showFeedback && idx === currentQuestion.correctAnswer ? 'border-green-500 bg-green-50' : ''}
+                    ${showFeedback && currentAnswer === idx.toString() && idx !== currentQuestion.correctAnswer ? 'border-red-500 bg-red-50' : ''}`}
+                    disabled={showFeedback}
+                  >
+                    <span className="font-medium">{String.fromCharCode(65 + idx)}.</span> {option}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {currentQuestion.type === 'short-answer' && (
+            <div>
+              <p className="text-lg leading-relaxed mb-6">{currentQuestion.question}</p>
+              <textarea
+                value={currentAnswer}
+                onChange={(e) => setCurrentAnswer(e.target.value)}
+                placeholder="핵심 개념을 포함하여 설명해주세요..."
+                className="w-full h-32 px-4 py-3 border-2 border-[#e0e0e0] rounded-xl focus:border-[#00c288] focus:outline-none resize-none"
+                disabled={showFeedback}
+              />
+            </div>
+          )}
+        </div>
+
+        {/* 피드백 */}
+        {showFeedback && (
+          <div className={`p-4 rounded-xl mb-6 ${
+            isCorrect ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'
+          }`}>
+            <div className="flex items-start gap-3">
+              <span className="text-2xl">{isCorrect ? '✅' : '❌'}</span>
+              <div>
+                <p className="font-semibold mb-1">
+                  {isCorrect ? '정답입니다!' : '틀렸습니다'}
+                </p>
+                {currentQuestion.explanation && (
+                  <p className="text-sm text-[#767676]">{currentQuestion.explanation}</p>
+                )}
+                {!isCorrect && currentQuestion.type === 'fill-blank' && (
+                  <p className="text-sm mt-2">
+                    정답: {currentQuestion.blanks.join(', ')}
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 액션 버튼 */}
+        <div className="flex gap-3">
+          {!showFeedback ? (
+            <>
+              <button
+                onClick={() => setCurrentAnswer('')}
+                className="flex-1 py-3 bg-[#e0e0e0] rounded-xl font-medium hover:bg-[#d0d0d0] transition-colors"
+              >
+                건너뛰기
+              </button>
+              <button
+                onClick={checkAnswer}
+                disabled={!currentAnswer}
+                className={`flex-1 py-3 rounded-xl font-semibold transition-all ${
+                  currentAnswer
+                    ? 'bg-gradient-to-r from-[#00c288] to-[#00a876] text-white hover:shadow-lg'
+                    : 'bg-[#e0e0e0] text-[#999999] cursor-not-allowed'
+                }`}
+              >
+                확인
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={nextQuestion}
+              className="w-full py-3 bg-gradient-to-r from-[#00c288] to-[#00a876] text-white rounded-xl font-semibold hover:shadow-lg transition-all"
+            >
+              {currentQuestionIndex < questions.length - 1 ? '다음 문제' : '결과 보기'}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* 나가기 버튼 */}
+      <button
+        onClick={onExit}
+        className="text-[#767676] hover:text-[#111111] transition-colors"
+      >
+        ← 복습 중단하고 돌아가기
+      </button>
+    </div>
+  );
+};

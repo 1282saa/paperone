@@ -1,0 +1,11 @@
+1. 목업 데이터
+- 해당 부분 api부분에 대해서 잘 분리 필요 -> 데이터 형식 일관성 있도록 해야함
+
+  const [subjects] = useState([
+    { subject_id: "temp-1", name: "국어", papers: 56, color: "#E8E8FF" },
+    { subject_id: "temp-2", name: "영어", papers: 69, color: "#FFE8E8" },
+    { subject_id: "temp-3", name: "수학", papers: 34, color: "#E8FFE8" },
+    { subject_id: "temp-4", name: "한국사", papers: 31, color: "#FFFFE8" },
+  ]);
+
+<하드 코딩된 데이터>

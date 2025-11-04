@@ -1,0 +1,240 @@
+import React, { useState, useEffect } from 'react';
+
+export const ReviewReminder = ({ documents = [] }) => {
+  const [urgentReviews, setUrgentReviews] = useState([]);
+  const [todayReviews, setTodayReviews] = useState([]);
+  const [upcomingReviews, setUpcomingReviews] = useState([]);
+
+  useEffect(() => {
+    // 복습 필요 문서 분류
+    const now = new Date();
+    const urgent = [];
+    const today = [];
+    const upcoming = [];
+
+    documents.forEach(doc => {
+      if (!doc.last_review_date) {
+        // 한 번도 복습하지 않은 문서
+        const createdDate = new Date(doc.created_at);
+        const daysSinceCreation = Math.floor((now - createdDate) / (1000 * 60 * 60 * 24));
+
+        if (daysSinceCreation >= 1) {
+          urgent.push({
+            ...doc,
+            memoryRate: calculateMemoryRate(daysSinceCreation),
+            daysOverdue: daysSinceCreation
+          });
+        }
+      } else {
+        // 복습한 적 있는 문서
+        const lastReviewDate = new Date(doc.last_review_date);
+        const daysSinceReview = Math.floor((now - lastReviewDate) / (1000 * 60 * 60 * 24));
+        const nextReviewDay = getNextReviewInterval(doc.review_count || 1);
+
+        if (daysSinceReview > nextReviewDay) {
+          urgent.push({
+            ...doc,
+            memoryRate: calculateMemoryRate(daysSinceReview),
+            daysOverdue: daysSinceReview - nextReviewDay
+          });
+        } else if (daysSinceReview === nextReviewDay) {
+          today.push({
+            ...doc,
+            memoryRate: calculateMemoryRate(daysSinceReview)
+          });
+        } else {
+          upcoming.push({
+            ...doc,
+            daysUntilReview: nextReviewDay - daysSinceReview
+          });
+        }
+      }
+    });
+
+    // 긴급도 순으로 정렬
+    urgent.sort((a, b) => a.memoryRate - b.memoryRate);
+
+    setUrgentReviews(urgent);
+    setTodayReviews(today);
+    setUpcomingReviews(upcoming);
+  }, [documents]);
+
+  // 망각률 계산 (에빙하우스 곡선)
+  const calculateMemoryRate = (days) => {
+    if (days === 0) return 100;
+    if (days === 1) return 58;
+    if (days === 2) return 44;
+    if (days === 7) return 33;
+    if (days === 14) return 28;
+    if (days === 30) return 21;
+    return Math.max(20, Math.round(100 * Math.exp(-days / 5)));
+  };
+
+  // 다음 복습 간격 계산
+  const getNextReviewInterval = (reviewCount) => {
+    const intervals = [1, 3, 7, 14, 30, 60]; // 복습 간격 (일)
+    return intervals[Math.min(reviewCount - 1, intervals.length - 1)];
+  };
+
+  const totalReviews = urgentReviews.length + todayReviews.length;
+
+  if (totalReviews === 0 && upcomingReviews.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* 긴급 복습 알림 */}
+      {urgentReviews.length > 0 && (
+        <div className="bg-gradient-to-r from-red-50 to-orange-50 border-l-4 border-red-500 rounded-xl p-6">
+          <div className="flex items-start justify-between">
+            <div className="flex-1">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="relative">
+                  <div className="absolute inset-0 bg-red-500 rounded-full animate-ping opacity-75"></div>
+                  <div className="relative w-3 h-3 bg-red-500 rounded-full"></div>
+                </div>
+                <h3 className="text-lg font-bold text-red-900">
+                  긴급 복습 필요!
+                </h3>
+                <span className="px-2 py-1 bg-red-500 text-white text-xs rounded-full font-semibold">
+                  {urgentReviews.length}개
+                </span>
+              </div>
+
+              {/* 가장 긴급한 문서 표시 */}
+              <div className="mb-4">
+                <p className="text-sm text-red-800 font-medium mb-2">
+                  "{urgentReviews[0].title}"
+                </p>
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-2">
+                    <div className="w-32 h-2 bg-red-200 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-gradient-to-r from-red-500 to-red-600 transition-all"
+                        style={{ width: `${100 - urgentReviews[0].memoryRate}%` }}
+                      />
+                    </div>
+                    <span className="text-xs font-semibold text-red-700">
+                      {urgentReviews[0].memoryRate}% 망각
+                    </span>
+                  </div>
+                  <span className="text-xs text-red-600">
+                    {urgentReviews[0].daysOverdue}일 지연
+                  </span>
+                </div>
+              </div>
+
+              {urgentReviews.length > 1 && (
+                <p className="text-xs text-red-700">
+                  외 {urgentReviews.length - 1}개의 문서가 긴급 복습 대기 중
+                </p>
+              )}
+            </div>
+
+            <button className="px-6 py-3 bg-red-500 text-white rounded-xl font-semibold hover:bg-red-600 transition-colors shadow-lg hover:shadow-xl transform hover:scale-105">
+              즉시 복습하기
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 오늘의 복습 */}
+      {todayReviews.length > 0 && (
+        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border-l-4 border-blue-500 rounded-xl p-6">
+          <div className="flex items-start justify-between">
+            <div className="flex-1">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-8 h-8 flex items-center justify-center bg-blue-500 rounded-lg">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                    <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                </div>
+                <h3 className="text-lg font-bold text-blue-900">
+                  오늘의 복습
+                </h3>
+                <span className="px-2 py-1 bg-blue-500 text-white text-xs rounded-full font-semibold">
+                  {todayReviews.length}개
+                </span>
+              </div>
+
+              <div className="space-y-2">
+                {todayReviews.slice(0, 2).map((doc, idx) => (
+                  <div key={idx} className="flex items-center justify-between bg-white/50 rounded-lg px-3 py-2">
+                    <span className="text-sm font-medium text-blue-800">
+                      {doc.title}
+                    </span>
+                    <span className="text-xs text-blue-600">
+                      기억률 {doc.memoryRate}%
+                    </span>
+                  </div>
+                ))}
+                {todayReviews.length > 2 && (
+                  <p className="text-xs text-blue-700 pl-3">
+                    +{todayReviews.length - 2}개 더보기
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <button className="px-6 py-3 bg-blue-500 text-white rounded-xl font-semibold hover:bg-blue-600 transition-colors">
+              복습 시작
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 예정된 복습 (접을 수 있음) */}
+      {upcomingReviews.length > 0 && (
+        <details className="bg-gray-50 rounded-xl p-6">
+          <summary className="flex items-center justify-between cursor-pointer">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 flex items-center justify-center bg-gray-400 rounded-lg">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                  <rect x="3" y="4" width="18" height="18" rx="2" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  <line x1="16" y1="2" x2="16" y2="6" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  <line x1="8" y1="2" x2="8" y2="6" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  <line x1="3" y1="10" x2="21" y2="10" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              </div>
+              <h3 className="text-lg font-semibold text-gray-700">
+                예정된 복습
+              </h3>
+              <span className="px-2 py-1 bg-gray-300 text-gray-700 text-xs rounded-full">
+                {upcomingReviews.length}개
+              </span>
+            </div>
+          </summary>
+
+          <div className="mt-4 space-y-2">
+            {upcomingReviews.map((doc, idx) => (
+              <div key={idx} className="flex items-center justify-between bg-white rounded-lg px-4 py-3">
+                <span className="text-sm font-medium">{doc.title}</span>
+                <span className="text-xs text-gray-500">
+                  {doc.daysUntilReview}일 후
+                </span>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+
+      {/* 복습 통계 */}
+      <div className="grid grid-cols-3 gap-3 mt-4">
+        <div className="bg-white rounded-xl p-4 text-center shadow-sm">
+          <div className="text-2xl font-bold text-red-500">{urgentReviews.length}</div>
+          <div className="text-xs text-gray-600">긴급</div>
+        </div>
+        <div className="bg-white rounded-xl p-4 text-center shadow-sm">
+          <div className="text-2xl font-bold text-blue-500">{todayReviews.length}</div>
+          <div className="text-xs text-gray-600">오늘</div>
+        </div>
+        <div className="bg-white rounded-xl p-4 text-center shadow-sm">
+          <div className="text-2xl font-bold text-gray-500">{upcomingReviews.length}</div>
+          <div className="text-xs text-gray-600">예정</div>
+        </div>
+      </div>
+    </div>
+  );
+};

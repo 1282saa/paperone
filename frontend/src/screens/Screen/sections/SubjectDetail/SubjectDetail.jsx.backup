@@ -1,0 +1,888 @@
+import React, { useState, useRef, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
+import { extractTextFromImage, validateImageFile } from "../../../../utils/ocrService";
+import { createDocument, getSubjectDocuments, updateDocument, deleteDocument, uploadImageToS3 } from "../../../../services/subjectsApi";
+import { ListItemSkeleton } from "../../../../components/ui/Skeleton";
+
+export const SubjectDetail = ({ subjectName, subjectId, selectedDate, onBack }) => {
+  // React Router navigation
+  const navigate = useNavigate();
+
+  // State: 바텀시트 표시 여부
+  const [showBottomSheet, setShowBottomSheet] = useState(false);
+
+  // State: OCR 처리 중 상태
+  const [isProcessing, setIsProcessing] = useState(false);
+
+  // State: OCR 처리 결과
+  const [ocrResult, setOcrResult] = useState(null);
+
+  // State: OCR 결과 모달 표시 여부
+  const [showOcrResultModal, setShowOcrResultModal] = useState(false);
+
+  // State: 편집 가능한 텍스트
+  const [editableText, setEditableText] = useState("");
+
+  // State: 전체화면 모드
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  // State: 업로드된 이미지 파일
+  const [uploadedImageFile, setUploadedImageFile] = useState(null);
+
+  // Ref: 파일 입력 참조
+  const fileInputRef = useRef(null);
+  const cameraInputRef = useRef(null);
+
+  // State: 문서 리스트
+  const [documents, setDocuments] = useState([]);
+
+  // State: 문서 로딩 상태
+  const [isLoadingDocuments, setIsLoadingDocuments] = useState(false);
+
+  // State: 필터링된 문서 리스트
+  const [filteredDocuments, setFilteredDocuments] = useState([]);
+
+  // State: 문서 제목 수정 모달
+  const [editingDocument, setEditingDocument] = useState(null);
+  const [editDocumentTitle, setEditDocumentTitle] = useState("");
+
+  // State: 수정/삭제 중 상태
+  const [isUpdatingDocument, setIsUpdatingDocument] = useState(false);
+  const [isDeletingDocument, setIsDeletingDocument] = useState(null);
+
+  // Effect: 과목 문서 목록 불러오기
+  useEffect(() => {
+    if (subjectId) {
+      loadDocuments();
+    }
+  }, [subjectId]);
+
+  // Effect: 문서 필터링
+  useEffect(() => {
+    if (!selectedDate) {
+      setFilteredDocuments(documents);
+      return;
+    }
+
+    // 선택된 날짜의 문서만 필터링 (날짜만 비교, 시간 무시)
+    const filtered = documents.filter(doc => {
+      if (!doc.created_at) return false;
+
+      // UTC 시간을 한국 시간(KST, UTC+9)으로 변환
+      const docDate = new Date(doc.created_at);
+      const kstOffset = 9 * 60; // 9시간을 분으로 환산
+      const localOffset = docDate.getTimezoneOffset(); // 현재 시스템의 UTC 오프셋 (분)
+      const kstTime = new Date(docDate.getTime() + (kstOffset + localOffset) * 60 * 1000);
+
+      // 날짜만 비교 (년-월-일)
+      const selectedYear = selectedDate.getFullYear();
+      const selectedMonth = selectedDate.getMonth();
+      const selectedDay = selectedDate.getDate();
+
+      const docYear = kstTime.getFullYear();
+      const docMonth = kstTime.getMonth();
+      const docDay = kstTime.getDate();
+
+      return selectedYear === docYear && selectedMonth === docMonth && selectedDay === docDay;
+    });
+
+    setFilteredDocuments(filtered);
+  }, [documents, selectedDate]);
+
+  // 문서 목록 불러오기
+  const loadDocuments = async () => {
+    try {
+      setIsLoadingDocuments(true);
+      const docs = await getSubjectDocuments(subjectId);
+      setDocuments(docs);
+    } catch (error) {
+      console.error("문서 목록 불러오기 실패:", error);
+      // 실패 시 빈 배열 유지
+    } finally {
+      setIsLoadingDocuments(false);
+    }
+  };
+
+  // Handler: 뒤로가기
+  const handleBack = () => {
+    onBack();
+  };
+
+  // Handler: 문서 클릭
+  const handleDocumentClick = (documentId) => {
+    navigate(`/review/subject/${subjectId}/document/${documentId}`);
+  };
+
+  // Handler: 문서 제목 수정 모달 열기
+  const handleEditDocument = (e, doc) => {
+    e.stopPropagation(); // 문서 클릭 이벤트 방지
+    setEditingDocument(doc);
+    setEditDocumentTitle(doc.title);
+  };
+
+  // Handler: 문서 제목 수정 제출
+  const handleSubmitEditDocument = async (e) => {
+    e.preventDefault();
+    if (!editDocumentTitle.trim() || editDocumentTitle.trim() === editingDocument.title || isUpdatingDocument) {
+      return;
+    }
+
+    try {
+      setIsUpdatingDocument(true);
+      await updateDocument(editingDocument.document_id, {
+        title: editDocumentTitle.trim(),
+      });
+
+      setEditingDocument(null);
+      setEditDocumentTitle("");
+      await loadDocuments();
+    } catch (error) {
+      console.error('문서 수정 실패:', error);
+      alert('문서 제목 수정에 실패했습니다. 다시 시도해주세요.');
+    } finally {
+      setIsUpdatingDocument(false);
+    }
+  };
+
+  // Handler: 문서 삭제
+  const handleDeleteDocument = async (e, doc) => {
+    e.stopPropagation(); // 문서 클릭 이벤트 방지
+
+    if (isDeletingDocument === doc.document_id) return;
+
+    try {
+      setIsDeletingDocument(doc.document_id);
+      await deleteDocument(doc.document_id);
+      await loadDocuments();
+    } catch (error) {
+      console.error('문서 삭제 실패:', error);
+      alert('문서 삭제에 실패했습니다. 다시 시도해주세요.');
+    } finally {
+      setIsDeletingDocument(null);
+    }
+  };
+
+  // Handler: 오늘한장 작성하기 버튼 클릭
+  const handleCreateStudy = () => {
+    setShowBottomSheet(true);
+  };
+
+  // Handler: 바텀시트 닫기
+  const handleCloseBottomSheet = () => {
+    setShowBottomSheet(false);
+  };
+
+  // Handler: 이미지 파일 처리 (OCR 실행)
+  const processImageFile = async (file) => {
+    // 파일 유효성 검사
+    const validation = validateImageFile(file);
+    if (!validation.valid) {
+      console.error('파일 유효성 검사 실패:', validation.error);
+      return;
+    }
+
+    // OCR 처리 시작
+    setIsProcessing(true);
+    setOcrResult(null);
+    setUploadedImageFile(file); // 이미지 파일 저장
+
+    try {
+      // AWS Textract를 사용하여 텍스트 추출
+      const result = await extractTextFromImage(file);
+
+      if (result.success) {
+        setOcrResult(result);
+        setEditableText(result.text);
+        setShowOcrResultModal(true);
+      } else {
+        console.error('텍스트 추출 실패:', result.error);
+        setUploadedImageFile(null); // 실패 시 이미지 파일 초기화
+      }
+    } catch (error) {
+      console.error("이미지 처리 중 오류:", error);
+      setUploadedImageFile(null); // 오류 시 이미지 파일 초기화
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // Handler: 사진 찍기 선택
+  const handleTakePhoto = () => {
+    setShowBottomSheet(false);
+
+    // 카메라 입력 트리거
+    if (cameraInputRef.current) {
+      cameraInputRef.current.click();
+    }
+  };
+
+  // Handler: 파일 업로드 선택
+  const handleFileUpload = () => {
+    setShowBottomSheet(false);
+
+    // 파일 입력 트리거
+    if (fileInputRef.current) {
+      fileInputRef.current.click();
+    }
+  };
+
+  // Handler: 카메라 파일 선택
+  const handleCameraFileChange = (event) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      processImageFile(file);
+    }
+    // 입력 초기화 (같은 파일 재선택 가능하도록)
+    event.target.value = "";
+  };
+
+  // Handler: 파일 선택
+  const handleFileChange = (event) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      processImageFile(file);
+    }
+    // 입력 초기화 (같은 파일 재선택 가능하도록)
+    event.target.value = "";
+  };
+
+  // Handler: OCR 결과 모달 닫기
+  const handleCloseOcrResultModal = () => {
+    setShowOcrResultModal(false);
+    setOcrResult(null);
+    setEditableText("");
+    setUploadedImageFile(null);
+    setIsFullscreen(false);
+  };
+
+  // Handler: 전체화면 토글
+  const handleToggleFullscreen = () => {
+    setIsFullscreen(!isFullscreen);
+  };
+
+  /**
+   * 이미지 압축 함수
+   * @param {File} file - 원본 이미지 파일
+   * @param {number} quality - JPEG 품질 (0-1)
+   * @param {number} maxWidth - 최대 너비 (px)
+   * @returns {Promise<Blob>} 압축된 JPEG Blob
+   */
+  const compressImage = (file, quality = 0.7, maxWidth = 1024) => {
+    return new Promise((resolve, reject) => {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      const img = new Image();
+
+      img.onload = () => {
+        try {
+          // 비율 유지하면서 크기 조정
+          const ratio = Math.min(maxWidth / img.width, maxWidth / img.height);
+          canvas.width = Math.floor(img.width * ratio);
+          canvas.height = Math.floor(img.height * ratio);
+
+          // 캔버스에 이미지 그리기
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+          // JPEG Blob으로 변환
+          canvas.toBlob((blob) => {
+            if (blob) {
+              resolve(blob);
+            } else {
+              reject(new Error("Canvas to Blob 변환 실패"));
+            }
+          }, 'image/jpeg', quality);
+
+          // URL 정리
+          URL.revokeObjectURL(img.src);
+        } catch (error) {
+          reject(error);
+        }
+      };
+
+      img.onerror = () => reject(new Error("이미지 로드 실패"));
+      img.src = URL.createObjectURL(file);
+    });
+  };
+
+  // Handler: 텍스트 저장
+  const handleSaveText = async () => {
+    if (!editableText.trim() || !subjectId) {
+      return;
+    }
+
+    try {
+      setIsProcessing(true);
+
+      // 문서 제목 생성
+      const titleFromText = editableText.split('\n')[0].substring(0, 50) || "새 문서";
+
+      // 이미지 S3 업로드
+      let imageUrl = null;
+      if (uploadedImageFile) {
+        try {
+          // 이미지 압축 (70% 품질, 최대 1024px)
+          const compressedFile = await compressImage(uploadedImageFile, 0.7, 1024);
+
+          if (!compressedFile) {
+            throw new Error("이미지 압축 실패");
+          }
+
+          // S3 업로드 시도
+          try {
+            const uploadResult = await uploadImageToS3(compressedFile);
+            imageUrl = uploadResult.image_url;
+          } catch (s3Error) {
+            // S3 실패 시 base64 폴백
+            const reader = new FileReader();
+            imageUrl = await new Promise((resolve, reject) => {
+              reader.onload = () => resolve(reader.result);
+              reader.onerror = reject;
+              reader.readAsDataURL(compressedFile);
+            });
+          }
+        } catch (error) {
+          console.error("이미지 처리 실패:", error);
+          // 원본 파일로 재시도
+          try {
+            const reader = new FileReader();
+            imageUrl = await new Promise((resolve, reject) => {
+              reader.onload = () => resolve(reader.result);
+              reader.onerror = reject;
+              reader.readAsDataURL(uploadedImageFile);
+            });
+          } catch (finalError) {
+            console.error("원본 파일 변환 실패:", finalError);
+            alert(`이미지 처리에 실패했습니다.\n이미지 없이 텍스트만 저장됩니다.`);
+          }
+        }
+      }
+
+      // 문서 데이터 생성
+      const documentData = {
+        subject_id: subjectId,
+        title: titleFromText,
+        extracted_text: editableText,
+        original_filename: uploadedImageFile?.name || ocrResult?.fileName || "uploaded_image.jpg",
+        file_size: uploadedImageFile?.size || 0,
+        pages: 1,
+      };
+
+      if (imageUrl) {
+        documentData.image_url = imageUrl;
+      }
+
+      // 문서 저장
+      await createDocument(documentData);
+
+      // 목록 새로고침 및 모달 닫기
+      await loadDocuments();
+      handleCloseOcrResultModal();
+    } catch (error) {
+      console.error("문서 저장 실패:", error);
+      alert("문서 저장에 실패했습니다. 다시 시도해주세요.");
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  return (
+    <div className="flex-1 h-full bg-[#f1f3f5] rounded-[40px_0px_0px_40px] overflow-auto flex items-start justify-center">
+      <div className="relative w-full max-w-[1178px] px-[60px] py-[60px]">
+
+        {/* Header: 상단 헤더 */}
+        <div className="flex items-center gap-6 mb-8">
+          <button
+            onClick={handleBack}
+            className="w-12 h-12 flex items-center justify-center rounded-xl hover:bg-white transition-colors border-0 bg-transparent cursor-pointer"
+          >
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+              <path d="M15 18L9 12L15 6" stroke="#111111" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </button>
+
+          <h1 className="[font-family:'Pretendard-SemiBold',Helvetica] font-semibold text-[#111111] text-3xl">
+            {subjectName}
+          </h1>
+
+          {selectedDate && (
+            <div className="ml-4 px-4 py-2 bg-[#00c288] text-white rounded-full [font-family:'Pretendard-Medium',Helvetica] font-medium text-sm">
+              {selectedDate.toLocaleDateString('ko-KR', { month: 'long', day: 'numeric' })} 문서만 표시 중
+            </div>
+          )}
+        </div>
+
+        {/* Documents List: 문서 리스트 */}
+        <div className="flex flex-col gap-4">
+          {isLoadingDocuments ? (
+            <div className="flex flex-col gap-4">
+              {Array.from({ length: 3 }).map((_, index) => (
+                <ListItemSkeleton key={index} />
+              ))}
+            </div>
+          ) : filteredDocuments.length === 0 ? (
+            <div className="bg-white rounded-2xl p-12 flex flex-col items-center justify-center gap-4">
+              <svg width="64" height="64" viewBox="0 0 24 24" fill="none">
+                <path d="M14 2H6C5.46957 2 4.96086 2.21071 4.58579 2.58579C4.21071 2.96086 4 3.46957 4 4V20C4 20.5304 4.21071 21.0391 4.58579 21.4142C4.96086 21.7893 5.46957 22 6 22H18C18.5304 22 19.0391 21.7893 19.4142 21.4142C19.7893 21.0391 20 20.5304 20 20V8L14 2Z" stroke="#d0d0d0" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                <path d="M14 2V8H20" stroke="#d0d0d0" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+              <div className="[font-family:'Pretendard-Medium',Helvetica] font-medium text-[#999999] text-lg">
+                {selectedDate ? '선택한 날짜에 저장된 문서가 없습니다' : '아직 저장된 문서가 없습니다'}
+              </div>
+              <div className="[font-family:'Pretendard-Regular',Helvetica] font-normal text-[#cccccc] text-sm">
+                {selectedDate ? '다른 날짜를 선택하거나 문서를 추가해보세요' : '오늘한장 작성하기로 문서를 추가해보세요'}
+              </div>
+            </div>
+          ) : (
+            filteredDocuments.map((doc) => {
+              // 날짜 포맷팅 (ISO 형식을 YYYY.MM.DD로 변환)
+              const formattedDate = doc.created_at
+                ? new Date(doc.created_at).toISOString().split('T')[0].replace(/-/g, '.')
+                : '';
+
+              return (
+                <div
+                  key={doc.document_id}
+                  className="w-full bg-white rounded-2xl p-6 flex items-center justify-between hover:shadow-xl hover:-translate-y-1 transition-all duration-300 cursor-pointer relative group"
+                  onClick={() => handleDocumentClick(doc.document_id)}
+                >
+                  {/* Left: 문서 아이콘 */}
+                  <div className="flex items-center gap-4">
+                    <div className="w-14 h-14 flex items-center justify-center bg-[#f1f3f5] rounded-xl">
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                        <path d="M14 2H6C5.46957 2 4.96086 2.21071 4.58579 2.58579C4.21071 2.96086 4 3.46957 4 4V20C4 20.5304 4.21071 21.0391 4.58579 21.4142C4.96086 21.7893 5.46957 22 6 22H18C18.5304 22 19.0391 21.7893 19.4142 21.4142C19.7893 21.0391 20 20.5304 20 20V8L14 2Z" stroke="#767676" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                        <path d="M14 2V8H20" stroke="#767676" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                    </div>
+
+                    {/* Center: 제목과 메타정보 */}
+                    <div className="flex flex-col items-start gap-1">
+                      <div className="[font-family:'Pretendard-SemiBold',Helvetica] font-semibold text-[#111111] text-lg text-left">
+                        {doc.title}
+                      </div>
+                      <div className="[font-family:'Pretendard-Regular',Helvetica] font-normal text-[#999999] text-sm flex items-center gap-2">
+                        <span>생성과제 {doc.pages || 1}장</span>
+                        <span>•</span>
+                        <span>{formattedDate}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Right: 수정/삭제 버튼 및 화살표 */}
+                  <div className="flex items-center gap-2">
+                    {/* 수정/삭제 버튼 - 호버 시 표시 */}
+                    <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-all duration-300">
+                      <button
+                        onClick={(e) => handleEditDocument(e, doc)}
+                        className="w-8 h-8 flex items-center justify-center rounded-full bg-blue-500 hover:bg-blue-600 hover:scale-110 active:scale-95 text-white transition-all duration-200 border-0 cursor-pointer"
+                        title="문서 제목 수정"
+                      >
+                        <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                          <path d="M11.333 2A2.121 2.121 0 0 1 14 4.667L5.333 13.333 1.667 14l.667-3.667L11 2Z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                        </svg>
+                      </button>
+                      <button
+                        onClick={(e) => handleDeleteDocument(e, doc)}
+                        disabled={isDeletingDocument === doc.document_id}
+                        className={`w-8 h-8 flex items-center justify-center rounded-full text-white transition-all duration-200 border-0 cursor-pointer ${
+                          isDeletingDocument === doc.document_id
+                            ? 'bg-[#cccccc] cursor-not-allowed'
+                            : 'bg-red-500 hover:bg-red-600 hover:scale-110 active:scale-95'
+                        }`}
+                        title="문서 삭제"
+                      >
+                        {isDeletingDocument === doc.document_id ? (
+                          <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                        ) : (
+                          <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+                            <path d="M2 4h12M5.333 4V2.667a1.333 1.333 0 0 1 1.334-1.334h2.666a1.333 1.333 0 0 1 1.334 1.334V4m2 0v9.333a1.333 1.333 0 0 1-1.334 1.334H4.667a1.333 1.333 0 0 1-1.334-1.334V4h9.334Z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                          </svg>
+                        )}
+                      </button>
+                    </div>
+
+                    {/* 화살표 아이콘 */}
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                      <path d="M9 18L15 12L9 6" stroke="#999999" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+
+        {/* Floating Action Button: 오늘한장 작성하기 버튼 */}
+        <button
+          onClick={handleCreateStudy}
+          className="fixed bottom-[60px] right-[60px] flex items-center gap-2 px-8 py-4 bg-[#00c288] rounded-full shadow-lg hover:bg-[#00a876] hover:shadow-2xl hover:scale-110 active:scale-95 transition-all duration-300 border-0 cursor-pointer"
+        >
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+            <path d="M12 5V19M5 12H19" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+          <span className="[font-family:'Pretendard-SemiBold',Helvetica] font-semibold text-white text-base">
+            오늘한장 작성하기
+          </span>
+        </button>
+
+        {/* Hidden File Inputs: 숨겨진 파일 입력 요소들 */}
+        {/* 카메라 촬영용 입력 */}
+        <input
+          ref={cameraInputRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          onChange={handleCameraFileChange}
+          className="hidden"
+        />
+
+        {/* 파일 업로드용 입력 */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          onChange={handleFileChange}
+          className="hidden"
+        />
+
+        {/* Processing Indicator: OCR 처리 중 표시 */}
+        {isProcessing && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 animate-fade-in">
+            <div className="bg-white rounded-3xl p-10 flex flex-col items-center gap-6 max-w-[400px] animate-scale-in">
+              {/* 로딩 애니메이션 */}
+              <div className="relative">
+                <div className="w-16 h-16 border-4 border-[#e0e0e0] border-t-[#00c288] rounded-full animate-spin"></div>
+                <div className="absolute inset-0 w-16 h-16 border-4 border-transparent border-b-[#00c288] rounded-full animate-spin animate-reverse" style={{animationDelay: '0.5s'}}></div>
+              </div>
+
+              {/* 텍스트 정보 */}
+              <div className="text-center">
+                <div className="[font-family:'Pretendard-SemiBold',Helvetica] font-semibold text-[#111111] text-xl mb-2">
+                  AI가 텍스트를 추출하고 있어요
+                </div>
+                <div className="[font-family:'Pretendard-Regular',Helvetica] font-normal text-[#767676] text-base">
+                  잠시만 기다려주세요...
+                </div>
+              </div>
+
+              {/* 진행 단계 표시 */}
+              <div className="flex items-center gap-3 w-full">
+                <div className="flex-1 h-2 bg-[#e0e0e0] rounded-full overflow-hidden">
+                  <div className="h-full bg-gradient-to-r from-[#00c288] to-[#00a876] rounded-full animate-pulse w-3/4 transition-all duration-1000"></div>
+                </div>
+                <span className="[font-family:'Pretendard-Medium',Helvetica] font-medium text-[#00c288] text-sm">75%</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+      </div>
+
+      {/* OCR Result Modal: OCR 결과 표시 좌우 분할 모달 */}
+      {showOcrResultModal && (
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 animate-fade-in"
+          onClick={handleCloseOcrResultModal}
+        >
+          <div
+            className={`bg-white rounded-[32px] flex flex-col animate-scale-in ${
+              isFullscreen
+                ? 'w-[95vw] h-[95vh]'
+                : 'w-full max-w-[1200px] h-[80vh]'
+            } transition-all duration-300`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header: 모달 헤더 */}
+            <div className="flex items-center justify-between p-6 border-b border-[#f1f3f5]">
+              <div className="flex items-center gap-4">
+                <h2 className="[font-family:'Pretendard-SemiBold',Helvetica] font-semibold text-[#111111] text-2xl">
+                  추출된 텍스트
+                </h2>
+                {ocrResult && (
+                  <div className="flex items-center gap-4 px-4 py-2 bg-[#f1f3f5] rounded-xl">
+                    <div className="flex items-center gap-2">
+                      <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
+                        <path d="M10 18C14.4183 18 18 14.4183 18 10C18 5.58172 14.4183 2 10 2C5.58172 2 2 5.58172 2 10C2 14.4183 5.58172 18 10 18Z" stroke="#00c288" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                        <path d="M10 6V10L12 12" stroke="#00c288" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                      <span className="[font-family:'Pretendard-Medium',Helvetica] font-medium text-[#111111] text-sm">
+                        신뢰도: {ocrResult.confidence}%
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
+                        <path d="M6 2V6M14 2V6M3 10H17M5 4H15C16.1046 4 17 4.89543 17 6V16C17 17.1046 16.1046 18 15 18H5C3.89543 18 3 17.1046 3 16V6C3 4.89543 3.89543 4 5 4Z" stroke="#00c288" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                      <span className="[font-family:'Pretendard-Medium',Helvetica] font-medium text-[#111111] text-sm">
+                        {ocrResult.lines.length}개 라인
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2">
+                {/* 전체화면 토글 버튼 */}
+                <button
+                  onClick={handleToggleFullscreen}
+                  className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-[#f1f3f5] transition-colors border-0 bg-transparent cursor-pointer"
+                  title={isFullscreen ? "작게 보기" : "전체화면"}
+                >
+                  {isFullscreen ? (
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                      <path d="M8 3V5H5V8H3V5C3 3.89543 3.89543 3 5 3H8ZM21 8V5C21 3.89543 20.1046 3 19 3H16V5H19V8H21ZM16 21V19H19V16H21V19C21 20.1046 20.1046 21 19 21H16ZM5 19V16H3V19C3 20.1046 3.89543 21 5 21H8V19H5Z" fill="#767676"/>
+                    </svg>
+                  ) : (
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                      <path d="M3 3H9V5H5V9H3V3ZM21 3V9H19V5H15V3H21ZM21 21H15V19H19V15H21V21ZM3 21V15H5V19H9V21H3Z" fill="#767676"/>
+                    </svg>
+                  )}
+                </button>
+
+                {/* 닫기 버튼 */}
+                <button
+                  onClick={handleCloseOcrResultModal}
+                  className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-[#f1f3f5] transition-colors border-0 bg-transparent cursor-pointer"
+                >
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                    <path d="M18 6L6 18M6 6L18 18" stroke="#767676" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            {/* Content: 좌우 분할 영역 */}
+            <div className="flex-1 flex overflow-hidden">
+              {/* Left Panel: 원본 이미지 */}
+              <div className="w-1/2 p-6 border-r border-[#f1f3f5] flex flex-col">
+                <div className="flex items-center gap-2 mb-4">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                    <path d="M21 19V5C21 3.89543 20.1046 3 19 3H5C3.89543 3 3 3.89543 3 5V19C3 20.1046 3.89543 21 5 21H19C20.1046 21 19 20.1046 21 19Z" stroke="#00c288" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M8.5 10C9.32843 10 10 9.32843 10 8.5C10 7.67157 9.32843 7 8.5 7C7.67157 7 7 7.67157 7 8.5C7 9.32843 7.67157 10 8.5 10Z" stroke="#00c288" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M21 15L16 10L5 21" stroke="#00c288" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                  <h3 className="[font-family:'Pretendard-SemiBold',Helvetica] font-semibold text-[#111111] text-lg">
+                    원본 이미지
+                  </h3>
+                </div>
+
+                <div className="flex-1 bg-[#f8f9fa] rounded-2xl p-4 flex items-center justify-center overflow-hidden">
+                  {uploadedImageFile ? (
+                    <img
+                      src={URL.createObjectURL(uploadedImageFile)}
+                      alt="업로드된 이미지"
+                      className="max-w-full max-h-full object-contain rounded-xl shadow-lg"
+                    />
+                  ) : (
+                    <div className="text-center">
+                      <svg width="64" height="64" viewBox="0 0 24 24" fill="none" className="mx-auto mb-4">
+                        <path d="M21 19V5C21 3.89543 20.1046 3 19 3H5C3.89543 3 3 3.89543 3 5V19C3 20.1046 3.89543 21 5 21H19C20.1046 21 19 20.1046 21 19Z" stroke="#cccccc" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                        <path d="M8.5 10C9.32843 10 10 9.32843 10 8.5C10 7.67157 9.32843 7 8.5 7C7.67157 7 7 7.67157 7 8.5C7 9.32843 7.67157 10 8.5 10Z" stroke="#cccccc" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                        <path d="M21 15L16 10L5 21" stroke="#cccccc" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                      <p className="[font-family:'Pretendard-Regular',Helvetica] font-normal text-[#999999] text-base">
+                        이미지를 불러올 수 없습니다
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Right Panel: 추출된 텍스트 */}
+              <div className="w-1/2 p-6 flex flex-col">
+                <div className="flex items-center gap-2 mb-4">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                    <path d="M14 2H6C5.46957 2 4.96086 2.21071 4.58579 2.58579C4.21071 2.96086 4 3.46957 4 4V20C4 20.5304 4.21071 21.0391 4.58579 21.4142C4.96086 21.7893 5.46957 22 6 22H18C18.5304 22 19.0391 21.7893 19.4142 21.4142C19.7893 21.0391 20 20.5304 20 20V8L14 2Z" stroke="#00c288" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M14 2V8H20" stroke="#00c288" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                  <h3 className="[font-family:'Pretendard-SemiBold',Helvetica] font-semibold text-[#111111] text-lg">
+                    추출된 텍스트
+                  </h3>
+                </div>
+
+                <div className="flex-1 overflow-hidden">
+                  <textarea
+                    value={editableText}
+                    onChange={(e) => setEditableText(e.target.value)}
+                    className="w-full h-full p-4 bg-[#f8f9fa] rounded-2xl [font-family:'Pretendard-Regular',Helvetica] font-normal text-[#111111] text-base resize-none focus:outline-none focus:ring-2 focus:ring-[#00c288] border-0 leading-relaxed"
+                    placeholder="추출된 텍스트가 여기에 표시됩니다..."
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Footer: 액션 버튼들 */}
+            <div className="flex items-center gap-4 p-6 border-t border-[#f1f3f5]">
+              <button
+                onClick={handleCloseOcrResultModal}
+                className="flex-1 h-14 flex items-center justify-center bg-[#e0e0e0] rounded-2xl hover:bg-[#d0d0d0] active:scale-95 transition-all duration-200 border-0 cursor-pointer"
+              >
+                <span className="[font-family:'Pretendard-SemiBold',Helvetica] font-semibold text-[#505050] text-base">
+                  취소
+                </span>
+              </button>
+              <button
+                onClick={handleSaveText}
+                disabled={isProcessing}
+                className={`flex-1 h-14 flex items-center justify-center rounded-2xl transition-all duration-200 border-0 cursor-pointer ${
+                  isProcessing
+                    ? 'bg-[#e0e0e0] cursor-not-allowed'
+                    : 'bg-[#00c288] hover:bg-[#00a876] active:scale-95'
+                }`}
+              >
+                {isProcessing ? (
+                  <div className="flex items-center gap-2">
+                    <div className="w-4 h-4 border-2 border-[#999999] border-t-transparent rounded-full animate-spin"></div>
+                    <span className="[font-family:'Pretendard-SemiBold',Helvetica] font-semibold text-[#999999] text-base">
+                      저장 중...
+                    </span>
+                  </div>
+                ) : (
+                  <span className="[font-family:'Pretendard-SemiBold',Helvetica] font-semibold text-white text-base">
+                    저장하기
+                  </span>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bottom Sheet Modal: 바텀시트 모달 */}
+      {showBottomSheet && (
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-end justify-center z-50 animate-fade-in"
+          onClick={handleCloseBottomSheet}
+        >
+          <div
+            className="bg-white rounded-t-[32px] w-full max-w-[600px] p-8 animate-slide-up"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Handle bar: 상단 바 */}
+            <div className="w-12 h-1 bg-[#e0e0e0] rounded-full mx-auto mb-8" />
+
+            {/* Title: 제목 */}
+            <h2 className="[font-family:'Pretendard-SemiBold',Helvetica] font-semibold text-[#111111] text-2xl text-center mb-8">
+              오늘한장 작성하기
+            </h2>
+
+            {/* Options: 선택 옵션들 */}
+            <div className="flex flex-col gap-4">
+              {/* 사진 찍기 옵션 */}
+              <button
+                onClick={handleTakePhoto}
+                className="flex items-center gap-4 p-6 bg-[#f1f3f5] rounded-2xl hover:bg-[#e8eaed] hover:scale-[1.02] active:scale-[0.98] transition-all duration-200 border-0 cursor-pointer"
+              >
+                <div className="w-14 h-14 flex items-center justify-center bg-[#00c288] rounded-xl">
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                    <path d="M23 19C23 19.5304 22.7893 20.0391 22.4142 20.4142C22.0391 20.7893 21.5304 21 21 21H3C2.46957 21 1.96086 20.7893 1.58579 20.4142C1.21071 20.0391 1 19.5304 1 19V8C1 7.46957 1.21071 6.96086 1.58579 6.58579C1.96086 6.21071 2.46957 6 3 6H7L9 3H15L17 6H21C21.5304 6 22.0391 6.21071 22.4142 6.58579C22.7893 6.96086 23 7.46957 23 8V19Z" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M12 17C14.2091 17 16 15.2091 16 13C16 10.7909 14.2091 9 12 9C9.79086 9 8 10.7909 8 13C8 15.2091 9.79086 17 12 17Z" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                </div>
+
+                <div className="flex flex-col items-start flex-1">
+                  <span className="[font-family:'Pretendard-SemiBold',Helvetica] font-semibold text-[#111111] text-lg">
+                    사진 찍기
+                  </span>
+                  <span className="[font-family:'Pretendard-Regular',Helvetica] font-normal text-[#767676] text-sm">
+                    카메라로 직접 촬영하기
+                  </span>
+                </div>
+
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                  <path d="M9 18L15 12L9 6" stroke="#999999" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              </button>
+
+              {/* 파일 업로드 옵션 */}
+              <button
+                onClick={handleFileUpload}
+                className="flex items-center gap-4 p-6 bg-[#f1f3f5] rounded-2xl hover:bg-[#e8eaed] hover:scale-[1.02] active:scale-[0.98] transition-all duration-200 border-0 cursor-pointer"
+              >
+                <div className="w-14 h-14 flex items-center justify-center bg-[#00c288] rounded-xl">
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                    <path d="M21 15V19C21 19.5304 20.7893 20.0391 20.4142 20.4142C20.0391 20.7893 19.5304 21 19 21H5C4.46957 21 3.96086 20.7893 3.58579 20.4142C3.21071 20.0391 3 19.5304 3 19V15" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M17 8L12 3L7 8" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M12 3V15" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                </div>
+
+                <div className="flex flex-col items-start flex-1">
+                  <span className="[font-family:'Pretendard-SemiBold',Helvetica] font-semibold text-[#111111] text-lg">
+                    파일 업로드
+                  </span>
+                  <span className="[font-family:'Pretendard-Regular',Helvetica] font-normal text-[#767676] text-sm">
+                    갤러리에서 선택하기
+                  </span>
+                </div>
+
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                  <path d="M9 18L15 12L9 6" stroke="#999999" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Document Modal: 문서 제목 수정 모달 */}
+      {editingDocument && (
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 animate-fade-in"
+          onClick={() => setEditingDocument(null)}
+        >
+          <div
+            className="bg-white rounded-[32px] w-full max-w-[500px] p-8 animate-scale-in"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 className="[font-family:'Pretendard-SemiBold',Helvetica] font-semibold text-[#111111] text-2xl mb-6">
+              문서 제목 수정
+            </h2>
+            <form onSubmit={handleSubmitEditDocument}>
+              <input
+                type="text"
+                value={editDocumentTitle}
+                onChange={(e) => setEditDocumentTitle(e.target.value)}
+                placeholder="문서 제목을 입력하세요"
+                className="w-full px-6 py-4 bg-[#f1f3f5] rounded-2xl [font-family:'Pretendard-Regular',Helvetica] font-normal text-[#111111] text-base focus:outline-none focus:ring-2 focus:ring-[#00c288] border-0 mb-6"
+                autoFocus
+              />
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setEditingDocument(null)}
+                  className="flex-1 h-14 flex items-center justify-center bg-[#e0e0e0] rounded-2xl hover:bg-[#d0d0d0] active:scale-95 transition-all duration-200 border-0 cursor-pointer"
+                >
+                  <span className="[font-family:'Pretendard-SemiBold',Helvetica] font-semibold text-[#505050] text-base">
+                    취소
+                  </span>
+                </button>
+                <button
+                  type="submit"
+                  disabled={isUpdatingDocument}
+                  className={`flex-1 h-14 flex items-center justify-center rounded-2xl transition-all duration-200 border-0 cursor-pointer ${
+                    isUpdatingDocument
+                      ? 'bg-[#e0e0e0] cursor-not-allowed'
+                      : 'bg-[#00c288] hover:bg-[#00a876] active:scale-95'
+                  }`}
+                >
+                  {isUpdatingDocument ? (
+                    <div className="flex items-center gap-2">
+                      <div className="w-4 h-4 border-2 border-[#999999] border-t-transparent rounded-full animate-spin"></div>
+                      <span className="[font-family:'Pretendard-SemiBold',Helvetica] font-semibold text-[#999999] text-base">
+                        저장 중...
+                      </span>
+                    </div>
+                  ) : (
+                    <span className="[font-family:'Pretendard-SemiBold',Helvetica] font-semibold text-white text-base">
+                      저장
+                    </span>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
