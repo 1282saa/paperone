@@ -423,7 +423,6 @@ def stream_claude_response_enhanced(
                 "temperature": TEMPERATURE,
                 "system": system_blocks,  # 배열 형식
                 "messages": messages,
-                "top_p": TOP_P,
                 "top_k": TOP_K
             }
         else:
@@ -434,7 +433,6 @@ def stream_claude_response_enhanced(
                 "temperature": TEMPERATURE,
                 "system": system_prompt,  # 문자열 형식
                 "messages": messages,
-                "top_p": TOP_P,
                 "top_k": TOP_K
             }
 
