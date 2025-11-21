@@ -394,7 +394,6 @@ def stream_claude_response_enhanced(
             "max_tokens": MAX_TOKENS,
             "temperature": TEMPERATURE,
             "messages": messages,
-            "top_p": TOP_P,
             "top_k": TOP_K
         }
 
